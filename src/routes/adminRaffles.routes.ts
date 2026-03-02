@@ -26,6 +26,9 @@ adminRafflesRoutes.post("/", async (req, res) => {
     maxNumber: z.number().int().min(1),
     pricePerNumber: z.number().int().min(1),
     status: z.enum(["draft", "active", "finished"]).optional(),
+    imageUrl: z.string().url().optional(),
+    videoUrl: z.string().url().optional(),
+    images: z.array(z.string().url()).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -42,6 +45,9 @@ adminRafflesRoutes.post("/", async (req, res) => {
       maxNumber: data.maxNumber,
       pricePerNumber: data.pricePerNumber,
       status: data.status ?? "draft",
+      imageUrl: data.imageUrl,
+      videoUrl: data.videoUrl,
+      images: data.images ?? (data.imageUrl ? [data.imageUrl] : []),
     },
   });
 
@@ -56,6 +62,9 @@ adminRafflesRoutes.patch("/:id", async (req, res) => {
     maxNumber: z.number().int().min(1).optional(),
     pricePerNumber: z.number().int().min(1).optional(),
     status: z.enum(["draft", "active", "finished"]).optional(),
+    imageUrl: z.string().url().nullable().optional(),
+    videoUrl: z.string().url().nullable().optional(),
+    images: z.array(z.string().url()).optional(),
   });
 
   const parsed = schema.safeParse(req.body);

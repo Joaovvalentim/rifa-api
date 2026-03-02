@@ -19,6 +19,9 @@ rafflesRoutes.get("/", async (_req, res) => {
       pricePerNumber: true,
       status: true,
       createdAt: true,
+      imageUrl: true,
+      videoUrl: true,
+      images: true,
     },
   });
 

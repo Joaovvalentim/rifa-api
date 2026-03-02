@@ -27,6 +27,10 @@ model Raffle {
   status         String   @default("active") // draft | active | finished
   createdAt      DateTime @default(now())
 
+  imageUrl       String?
+  videoUrl       String?
+  images         String[] @default([])
+
   orders       Order[]
   orderNumbers OrderNumber[]
 

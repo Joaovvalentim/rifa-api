@@ -2,9 +2,27 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
+import { AUTH_COOKIE_NAME, IS_PRODUCTION, JWT_SECRET } from "../lib/env";
 import { prisma } from "../lib/prisma";
+import { createRateLimit } from "../middlewares/rateLimit";
 
 export const authRoutes = Router();
+
+const authCookieOptions = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: IS_PRODUCTION,
+  maxAge: 15 * 60 * 1000,
+  path: "/",
+};
+
+authRoutes.use(
+  createRateLimit({
+    windowMs: 15 * 60 * 1000,
+    maxRequests: 20,
+    message: "Muitas tentativas de autenticacao. Tente novamente mais tarde.",
+  })
+);
 
 authRoutes.post("/register", async (req, res) => {
   const schema = z.object({
@@ -33,9 +51,12 @@ authRoutes.post("/register", async (req, res) => {
     console.error(err);
     console.error("PRISMA REGISTER ERROR ↑↑↑");
 
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Email ja cadastrado" });
+    }
+
     return res.status(500).json({
-      error: "Erro interno ao criar usuário",
-      details: err?.message ?? err,
+      error: "Erro interno ao criar usuario",
     });
   }
 });
@@ -54,16 +75,31 @@ authRoutes.post("/login", async (req, res) => {
   const { email, password } = parsed.data;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
+  if (!user) {
+    return res.status(401).json({ error: "Credenciais invalidas" });
+  }
 
   const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+  if (!ok) {
+    return res.status(401).json({ error: "Credenciais invalidas" });
+  }
 
-  const token = jwt.sign(
-    { userId: user.id },
-    process.env.JWT_SECRET || "secret",
-    { expiresIn: "15m" }
-  );
+  const token = jwt.sign({ userId: user.id }, JWT_SECRET, {
+    expiresIn: "15m",
+  });
 
-  return res.json({ token });
+  res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions);
+  return res.json({
+    ok: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
+  });
+});
+
+authRoutes.post("/logout", (_req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions);
+  return res.json({ ok: true });
 });

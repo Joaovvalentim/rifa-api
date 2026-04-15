@@ -1,25 +1,39 @@
-import express from "express";
 import cors from "cors";
-import helmet from "helmet";
 import dotenv from "dotenv";
-import { authRoutes } from "./routes/auth.routes";
-import { rafflesRoutes } from "./routes/raffles.routes";
-import { ordersRoutes } from "./routes/orders.routes";
+import express from "express";
+import helmet from "helmet";
 import { startExpirePendingOrdersJob } from "./jobs/expirePendingOrders";
+import { CORS_ORIGINS } from "./lib/env";
+import { adminDrawRoutes } from "./routes/adminDraw.routes";
+import { adminOrdersRoutes } from "./routes/adminOrders.routes";
+import { adminRaffleStatsRoutes } from "./routes/adminRaffleStats.routes";
+import { adminRafflesRoutes } from "./routes/adminRaffles.routes";
+import { authRoutes } from "./routes/auth.routes";
 import { meRoutes } from "./routes/me.routes";
 import { myOrdersRoutes } from "./routes/myOrders.routes";
-import { adminRafflesRoutes } from "./routes/adminRaffles.routes";
-import { adminOrdersRoutes } from "./routes/adminOrders.routes";
-import { adminDrawRoutes } from "./routes/adminDraw.routes";
+import { ordersRoutes } from "./routes/orders.routes";
+import { rafflesRoutes } from "./routes/raffles.routes";
 import { raffleWinnerRoutes } from "./routes/raffleWinner.routes";
-import { adminRaffleStatsRoutes } from "./routes/adminRaffleStats.routes";
 
 dotenv.config();
 
 const app = express();
+const allowedOrigins = new Set(CORS_ORIGINS);
 
-app.use(express.json());
-app.use(cors());
+app.disable("x-powered-by");
+app.use(express.json({ limit: "1mb" }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Origin nao permitida por CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+  })
+);
 app.use(helmet());
 
 app.get("/health", (_req, res) => {

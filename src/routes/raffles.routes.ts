@@ -21,17 +21,46 @@ const publicRaffleSelect = {
   },
 } as const;
 
-function serializePublicRaffle(raffle: {
+function serializePublicRaffle(
+  raffle: {
   winner?: { number: number } | null;
-  [key: string]: unknown;
-}) {
+    maxNumber: number;
+    [key: string]: unknown;
+  },
+  soldNumbersCount = 0
+) {
   const { winner, ...rest } = raffle;
+  const soldPercentage =
+    raffle.maxNumber > 0
+      ? Math.min(1, Math.max(0, soldNumbersCount / raffle.maxNumber))
+      : 0;
 
   return {
     ...rest,
     hasWinner: Boolean(winner),
     winnerNumber: winner?.number ?? null,
+    soldNumbersCount,
+    soldPercentage,
   };
+}
+
+async function loadSoldCounts(raffleIds: string[]) {
+  if (raffleIds.length === 0) {
+    return new Map<string, number>();
+  }
+
+  const grouped = await prisma.orderNumber.groupBy({
+    by: ["raffleId"],
+    where: {
+      raffleId: { in: raffleIds },
+      status: "confirmed",
+    },
+    _count: {
+      _all: true,
+    },
+  });
+
+  return new Map(grouped.map((entry) => [entry.raffleId, entry._count._all]));
 }
 
 rafflesRoutes.get("/", async (_req, res) => {
@@ -45,7 +74,13 @@ rafflesRoutes.get("/", async (_req, res) => {
     orderBy: { createdAt: "desc" },
   });
 
-  res.json(raffles.map(serializePublicRaffle));
+  const soldCounts = await loadSoldCounts(raffles.map((raffle) => raffle.id));
+
+  res.json(
+    raffles.map((raffle) =>
+      serializePublicRaffle(raffle, soldCounts.get(raffle.id) ?? 0)
+    )
+  );
 });
 
 rafflesRoutes.get("/:id", async (req, res) => {
@@ -63,5 +98,12 @@ rafflesRoutes.get("/:id", async (req, res) => {
     return res.status(404).json({ error: "Rifa nao encontrada" });
   }
 
-  return res.json(serializePublicRaffle(raffle));
+  const soldCount = await prisma.orderNumber.count({
+    where: {
+      raffleId: raffle.id,
+      status: "confirmed",
+    },
+  });
+
+  return res.json(serializePublicRaffle(raffle, soldCount));
 });

@@ -4,6 +4,17 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { auth } from "../middlewares/auth";
 import { createRateLimit } from "../middlewares/rateLimit";
+import {
+  buildPixExpiration,
+  createIdempotencyKey,
+  getMercadoPagoPayer,
+  getMercadoPagoOrderClient,
+} from "../lib/mercadoPago";
+import {
+  amountToMercadoPagoString,
+  buildPaymentExternalRef,
+  extractPixPayment,
+} from "../lib/orderPayments";
 
 export const ordersRoutes = Router();
 
@@ -30,14 +41,43 @@ ordersRoutes.post("/", auth, async (req, res) => {
   const userId = (req as Request & { userId?: string }).userId as string;
 
   try {
-    const raffle = await prisma.raffle.findUnique({ where: { id: raffleId } });
+    const [raffle, user] = await Promise.all([
+      prisma.raffle.findUnique({ where: { id: raffleId } }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, name: true },
+      }),
+    ]);
+
     if (!raffle || raffle.status !== "active") {
       return res.status(404).json({ error: "Rifa nao encontrada" });
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const totalAmount = quantity * raffle.pricePerNumber;
+    if (!user?.email) {
+      return res.status(400).json({ error: "Usuario sem email valido" });
+    }
 
+    const totalNumbersInRange = raffle.maxNumber - raffle.minNumber + 1;
+    if (totalNumbersInRange <= 0) {
+      return res.status(409).json({ error: "Intervalo de numeros da rifa invalido." });
+    }
+
+    const unavailableNumbers = await prisma.orderNumber.count({
+      where: { raffleId },
+    });
+    const availableNumbers = totalNumbersInRange - unavailableNumbers;
+
+    if (availableNumbers < quantity) {
+      return res.status(409).json({
+        error: `Restam apenas ${Math.max(availableNumbers, 0)} numero(s) disponiveis nesta rifa.`,
+      });
+    }
+
+    const { expiresAt, isoDuration } = buildPixExpiration();
+    const totalAmount = quantity * raffle.pricePerNumber;
+    const draftExternalRef = `draft:${createIdempotencyKey()}`;
+
+    const draft = await prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           userId,
@@ -45,13 +85,26 @@ ordersRoutes.post("/", auth, async (req, res) => {
           quantity,
           totalAmount,
           status: "pending",
+          paymentStatus: "pending",
+          paymentStatusDetail: "waiting_transfer",
+          paymentExternalRef: draftExternalRef,
+          expiresAt,
         },
         select: { id: true },
       });
 
-      const maxRounds = 30;
-      const batchSize = Math.max(quantity * 3, 200);
+      const paymentExternalRef = buildPaymentExternalRef(order.id);
 
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentExternalRef },
+      });
+
+      const maxRounds = 30;
+      const batchSize = Math.min(
+        totalNumbersInRange,
+        Math.max(quantity * 3, 200)
+      );
       let allocated: number[] = [];
 
       for (
@@ -107,12 +160,119 @@ ordersRoutes.post("/", auth, async (req, res) => {
 
       return {
         orderId: order.id,
+        paymentExternalRef,
         numbers: allocated,
-        totalAmount,
       };
     });
 
-    return res.status(201).json(result);
+    let mpOrder;
+    const mercadoPagoPayload = {
+      type: "online",
+      external_reference: draft.paymentExternalRef,
+      processing_mode: "automatic",
+      total_amount: amountToMercadoPagoString(totalAmount),
+      payer: getMercadoPagoPayer(user),
+      transactions: {
+        payments: [
+          {
+            amount: amountToMercadoPagoString(totalAmount),
+            payment_method: {
+              id: "pix",
+              type: "bank_transfer",
+              statement_descriptor: "SOALEMAES",
+            },
+            expiration_time: isoDuration,
+          },
+        ],
+      },
+    };
+
+    try {
+      const orderClient = getMercadoPagoOrderClient();
+      console.log(
+        "MERCADO PAGO ORDER PAYLOAD:",
+        JSON.stringify(mercadoPagoPayload, null, 2)
+      );
+      mpOrder = await orderClient.create({
+        body: mercadoPagoPayload,
+        requestOptions: {
+          idempotencyKey: createIdempotencyKey(),
+        },
+      });
+      console.log(
+        "MERCADO PAGO ORDER RESPONSE:",
+        JSON.stringify(mpOrder, null, 2)
+      );
+    } catch (paymentError: any) {
+      console.error(
+        "MERCADO PAGO ORDER ERROR RAW:",
+        JSON.stringify(paymentError, null, 2)
+      );
+      console.error(
+        "MERCADO PAGO ORDER ERROR DETAILS:",
+        JSON.stringify(paymentError?.errors ?? paymentError?.cause ?? null, null, 2)
+      );
+      await prisma.$transaction(async (tx) => {
+        await tx.orderNumber.deleteMany({
+          where: { orderId: draft.orderId },
+        });
+
+        await tx.order.update({
+          where: { id: draft.orderId },
+          data: {
+            status: "failed",
+            paymentStatus: "failed",
+            paymentStatusDetail: "payment_provider_error",
+          },
+        });
+      });
+
+      throw paymentError;
+    }
+
+    const pix = extractPixPayment(mpOrder);
+
+    const result = await prisma.order.update({
+      where: { id: draft.orderId },
+      data: {
+        paymentProviderOrderId: pix.providerOrderId,
+        paymentProviderTxnId: pix.providerTransactionId,
+        paymentStatus: pix.status,
+        paymentStatusDetail: pix.statusDetail,
+        paymentTicketUrl: pix.ticketUrl,
+        paymentQrCode: pix.qrCode,
+        paymentQrCodeBase64: pix.qrCodeBase64,
+        expiresAt: pix.expiresAt ?? expiresAt,
+      },
+      select: {
+        id: true,
+        quantity: true,
+        totalAmount: true,
+        expiresAt: true,
+        paymentStatus: true,
+        paymentStatusDetail: true,
+        paymentTicketUrl: true,
+        paymentQrCode: true,
+        paymentQrCodeBase64: true,
+        numbers: {
+          select: { number: true },
+          orderBy: { number: "asc" },
+        },
+      },
+    });
+
+    return res.status(201).json({
+      orderId: result.id,
+      quantity: result.quantity,
+      totalAmount: result.totalAmount,
+      paymentStatus: result.paymentStatus,
+      paymentStatusDetail: result.paymentStatusDetail,
+      expiresAt: result.expiresAt,
+      paymentTicketUrl: result.paymentTicketUrl,
+      paymentQrCode: result.paymentQrCode,
+      paymentQrCodeBase64: result.paymentQrCodeBase64,
+      numbers: result.numbers.map((item) => item.number),
+    });
   } catch (err: any) {
     console.error("ORDER ERROR:", err);
     return res

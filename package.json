@@ -30,6 +30,7 @@
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
+    "mercadopago": "^2.12.0",
     "node-cron": "^4.2.1",
     "pg": "^8.16.3",
     "prisma": "^7.2.0",

@@ -23,9 +23,13 @@ adminOrdersRoutes.get("/", async (req, res) => {
     select: {
       id: true,
       status: true,
+      paymentStatus: true,
+      paymentStatusDetail: true,
       quantity: true,
       totalAmount: true,
       createdAt: true,
+      expiresAt: true,
+      paidAt: true,
       user: { select: { id: true, name: true, email: true } },
       raffle: { select: { id: true, title: true } },
       numbers: {
@@ -81,7 +85,13 @@ adminOrdersRoutes.patch("/:id/status", async (req, res) => {
 
       return tx.order.update({
         where: { id: order.id },
-        data: { status },
+        data: {
+          status,
+          paymentStatus: status === "paid" ? "processed" : "cancelled",
+          paymentStatusDetail:
+            status === "paid" ? "approved_manually" : "cancelled_manually",
+          paidAt: status === "paid" ? new Date() : null,
+        },
         select: { id: true, status: true },
       });
     });

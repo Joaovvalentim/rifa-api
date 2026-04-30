@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
+import { syncMercadoPagoOrder } from "../lib/syncMercadoPagoOrder";
 
 export function startExpirePendingOrdersJob() {
   cron.schedule("* * * * *", async () => {
@@ -11,12 +12,36 @@ export function startExpirePendingOrdersJob() {
           status: "pending",
           expiresAt: { lte: now },
         },
-        select: { id: true },
+        select: { id: true, paymentProviderOrderId: true },
       });
 
       if (oldOrders.length === 0) return;
 
-      const ids = oldOrders.map((order) => order.id);
+      for (const order of oldOrders) {
+        if (!order.paymentProviderOrderId) continue;
+
+        try {
+          await syncMercadoPagoOrder(order.paymentProviderOrderId);
+        } catch (err) {
+          console.error("Erro ao sincronizar pedido expirado:", {
+            orderId: order.id,
+            err,
+          });
+        }
+      }
+
+      const ordersStillPending = await prisma.order.findMany({
+        where: {
+          id: { in: oldOrders.map((order) => order.id) },
+          status: "pending",
+          expiresAt: { lte: now },
+        },
+        select: { id: true },
+      });
+
+      if (ordersStillPending.length === 0) return;
+
+      const ids = ordersStillPending.map((order) => order.id);
 
       await prisma.$transaction(async (tx) => {
         await tx.orderNumber.deleteMany({

@@ -33,7 +33,7 @@ raffleWinnerRoutes.get("/raffles/:id/winner", async (req, res) => {
       orderId: true,
       order: {
         select: {
-          user: { select: { name: true, email: true } },
+          user: { select: { name: true } },
         },
       },
     },

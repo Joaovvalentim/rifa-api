@@ -35,6 +35,8 @@ model Raffle {
   orderNumbers OrderNumber[]
 
   winner Winner?
+
+  @@index([status])
 }
 
 model Order {
@@ -63,6 +65,11 @@ model Order {
   numbers OrderNumber[]
 
   winner Winner?
+
+  @@index([userId])
+  @@index([raffleId])
+  @@index([status, expiresAt])
+  @@index([raffleId, status])
 }
 
 model OrderNumber {
@@ -78,6 +85,7 @@ model OrderNumber {
 
   @@unique([raffleId, number])
   @@index([orderId])
+  @@index([raffleId, status])
 }
 
 model Winner {

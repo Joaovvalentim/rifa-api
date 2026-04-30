@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { MercadoPagoConfig, Order } from "mercadopago";
+import { OrderResponse } from "mercadopago/dist/clients/order/commonTypes";
 import {
   APP_WEB_URL,
   MP_WEBHOOK_SECRET,
+  PAYMENT_PROVIDER_MODE,
   PIX_EXPIRATION_MINUTES,
   PUBLIC_API_URL,
   requireEnv,
@@ -19,6 +21,44 @@ function getClient() {
 
 export function getMercadoPagoOrderClient() {
   return new Order(getClient());
+}
+
+export function isMockPaymentProvider() {
+  return PAYMENT_PROVIDER_MODE === "mock";
+}
+
+export function createMockPixOrder(params: {
+  externalReference: string;
+  totalAmount: string;
+  expiresAt: Date;
+}): OrderResponse {
+  const mockId = `mock_order_${randomUUID()}`;
+
+  return {
+    id: mockId,
+    status: "pending",
+    status_detail: "waiting_transfer",
+    external_reference: params.externalReference,
+    transactions: {
+      payments: [
+        {
+          id: `mock_payment_${randomUUID()}`,
+          status: "pending",
+          status_detail: "waiting_transfer",
+          date_of_expiration: params.expiresAt.toISOString(),
+          payment_method: {
+            ticket_url: `${APP_WEB_URL}/checkout/mock/${mockId}`,
+            qr_code: `000201mock-${params.externalReference}-${params.totalAmount}`,
+            qr_code_base64: undefined,
+          },
+        },
+      ],
+    },
+    api_response: {
+      status: 201,
+      headers: [],
+    },
+  } as unknown as OrderResponse;
 }
 
 export function isMercadoPagoTestToken() {

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { OrderResponse } from "mercadopago/dist/clients/order/commonTypes";
-import { MP_WEBHOOK_SECRET } from "./env";
+import { IS_PRODUCTION, MP_WEBHOOK_SECRET } from "./env";
 
 type LocalOrderStatus = {
   status: "pending" | "paid" | "expired" | "cancelled" | "failed";
@@ -98,7 +98,7 @@ export function verifyMercadoPagoWebhookSignature(params: {
   dataId?: string;
 }): boolean {
   if (!MP_WEBHOOK_SECRET) {
-    return true;
+    return !IS_PRODUCTION;
   }
 
   const rawSignature = Array.isArray(params.signatureHeader)

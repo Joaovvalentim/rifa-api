@@ -21,7 +21,7 @@ export async function syncMercadoPagoOrder(providerOrderId: string) {
         { paymentExternalRef: externalRef },
       ],
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, paidAt: true },
   });
 
   if (!localOrder) {
@@ -60,7 +60,10 @@ export async function syncMercadoPagoOrder(providerOrderId: string) {
         paymentQrCode: pix.qrCode,
         paymentQrCodeBase64: pix.qrCodeBase64,
         expiresAt: pix.expiresAt,
-        paidAt: next.paidAt ?? undefined,
+        paidAt:
+          next.status === "paid" && !localOrder.paidAt
+            ? next.paidAt
+            : undefined,
       },
     });
   });

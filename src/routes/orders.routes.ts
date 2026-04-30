@@ -6,10 +6,13 @@ import { auth } from "../middlewares/auth";
 import { createRateLimit } from "../middlewares/rateLimit";
 import {
   buildPixExpiration,
+  createMockPixOrder,
   createIdempotencyKey,
   getMercadoPagoPayer,
   getMercadoPagoOrderClient,
+  isMockPaymentProvider,
 } from "../lib/mercadoPago";
+import { PAYMENT_DEBUG_LOGS } from "../lib/env";
 import {
   amountToMercadoPagoString,
   buildPaymentExternalRef,
@@ -17,6 +20,20 @@ import {
 } from "../lib/orderPayments";
 
 export const ordersRoutes = Router();
+
+function sanitizeMercadoPagoLogPayload(payload: unknown) {
+  return JSON.stringify(
+    payload,
+    (key, value) => {
+      if (["email", "qr_code", "qr_code_base64", "ticket_url"].includes(key)) {
+        return value ? "[redacted]" : value;
+      }
+
+      return value;
+    },
+    2
+  );
+}
 
 ordersRoutes.use(
   createRateLimit({
@@ -188,26 +205,35 @@ ordersRoutes.post("/", auth, async (req, res) => {
     };
 
     try {
-      const orderClient = getMercadoPagoOrderClient();
-      console.log(
-        "MERCADO PAGO ORDER PAYLOAD:",
-        JSON.stringify(mercadoPagoPayload, null, 2)
-      );
-      mpOrder = await orderClient.create({
-        body: mercadoPagoPayload,
-        requestOptions: {
-          idempotencyKey: createIdempotencyKey(),
-        },
-      });
-      console.log(
-        "MERCADO PAGO ORDER RESPONSE:",
-        JSON.stringify(mpOrder, null, 2)
-      );
+      if (isMockPaymentProvider()) {
+        mpOrder = createMockPixOrder({
+          externalReference: draft.paymentExternalRef,
+          totalAmount: amountToMercadoPagoString(totalAmount),
+          expiresAt,
+        });
+      } else {
+        const orderClient = getMercadoPagoOrderClient();
+        if (PAYMENT_DEBUG_LOGS) {
+          console.log(
+            "MERCADO PAGO ORDER PAYLOAD:",
+            sanitizeMercadoPagoLogPayload(mercadoPagoPayload)
+          );
+        }
+        mpOrder = await orderClient.create({
+          body: mercadoPagoPayload,
+          requestOptions: {
+            idempotencyKey: createIdempotencyKey(),
+          },
+        });
+      }
+
+      if (PAYMENT_DEBUG_LOGS) {
+        console.log(
+          "PAYMENT ORDER RESPONSE:",
+          sanitizeMercadoPagoLogPayload(mpOrder)
+        );
+      }
     } catch (paymentError: any) {
-      console.error(
-        "MERCADO PAGO ORDER ERROR RAW:",
-        JSON.stringify(paymentError, null, 2)
-      );
       console.error(
         "MERCADO PAGO ORDER ERROR DETAILS:",
         JSON.stringify(paymentError?.errors ?? paymentError?.cause ?? null, null, 2)

@@ -43,10 +43,12 @@ adminDrawRoutes.post(
         const existing = await tx.winner.findUnique({ where: { raffleId } });
         if (existing) throw new Error("Esta rifa já possui vencedor");
 
-        // 3) candidatos: números confirmados
+        // 3) candidatos: numeros confirmados em ordem deterministica.
+        // A verificacao publica usa exatamente a mesma ordenacao.
         const candidates = await tx.orderNumber.findMany({
           where: { raffleId, status: "confirmed" },
           select: { orderId: true, number: true },
+          orderBy: [{ number: "asc" }, { orderId: "asc" }],
         });
 
         if (candidates.length === 0) {

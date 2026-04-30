@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { DISABLE_RATE_LIMIT } from "../lib/env";
 
 type RateLimitOptions = {
   windowMs: number;
@@ -15,6 +16,10 @@ export function createRateLimit(options: RateLimitOptions) {
   const buckets = new Map<string, Bucket>();
 
   return function rateLimit(req: Request, res: Response, next: NextFunction) {
+    if (DISABLE_RATE_LIMIT) {
+      return next();
+    }
+
     const now = Date.now();
     const key = req.ip || req.socket.remoteAddress || "unknown";
     const current = buckets.get(key);
